@@ -16,3 +16,19 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 15
+
+  # requirements.txt is the hash-locked JJB install, compiled from
+  # requirements.in with pip-compile.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "Build(pip)"
+    cooldown:
+      default-days: 7
+    ignore:
+      # JJB 6.5.0 needs pkg_resources, which setuptools v81 removed.
+      - dependency-name: "setuptools"
+        versions: [">=81"]
+    open-pull-requests-limit: 15
