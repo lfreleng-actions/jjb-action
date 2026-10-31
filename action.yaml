@@ -2,52 +2,102 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
-# actions-template
-name: "🛠️ Actions Template"
-description: "Description of action"
-# Any relevant notes/observations can go here
+# jjb-action
+name: "🏗️ Jenkins Job Builder"
+description: "Test or update Jenkins jobs with a pinned Jenkins Job Builder"
 
 inputs:
-  input:
-    description: "Description of input"
-    required: true
+  mode:
+    description: "'test' generates the job XML; 'update' pushes it to Jenkins"
+    required: false
+    default: "test"
+  path_prefix:
+    description: "Repository root; JJB runs from here (include_path=.)"
+    required: false
+    default: "."
+  jjb_path:
+    description: "JJB tree relative to path_prefix, processed recursively"
+    required: false
+    default: "jjb"
+  jenkins_url:
+    description: "Jenkins URL, https:// only (update mode, required there)"
+    required: false
+    default: ""
+  jenkins_user:
+    description: "Jenkins user (update mode, required there)"
+    required: false
+    default: ""
+  jenkins_password:
+    description: "Jenkins password or API token (update mode, required there)"
+    required: false
+    default: ""
+  delete_old:
+    description: "Update mode: pass --delete-old to remove stale managed jobs"
+    required: false
+    default: "true"
+  workers:
+    description: "Update mode: --workers, 0 to 64; 0 means one per CPU"
+    required: false
+    default: "0"
 
 outputs:
-  output:
-    description: "Description of output"
-    value: ${{ steps.code.outputs.output }}
+  job_count:
+    description: "Number of jobs the tree generates"
+    value: ${{ steps.jjb.outputs.job_count }}
+  output_dir:
+    description: "Test mode: the generated XML, in --config-xml layout"
+    value: ${{ steps.jjb.outputs.output_dir }}
 
 runs:
   using: "composite"
   steps:
-    - name: "Friendly Name"
-      id: code
+    - name: "Validate inputs"
       shell: bash
       env:
-        INPUT_VALUE: ${{ inputs.input }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
+        INPUT_JJB_PATH: ${{ inputs.jjb_path }}
+        INPUT_JENKINS_URL: ${{ inputs.jenkins_url }}
+        INPUT_JENKINS_USER: ${{ inputs.jenkins_user }}
+        INPUT_JENKINS_PASSWORD: ${{ inputs.jenkins_password }}
+        INPUT_DELETE_OLD: ${{ inputs.delete_old }}
+        INPUT_WORKERS: ${{ inputs.workers }}
       run: |
-        # Friendly Name
-        input="$INPUT_VALUE"
-        if [ -z "$input" ]; then
-          echo "Error: mandatory input was not set/configured ❌"
-          exit 1
-        fi
+        # Validate inputs
+        bash "$GITHUB_ACTION_PATH/scripts/validate.sh"
 
-        # Write the output using the multiline heredoc format with a random
-        # delimiter so that an input containing newlines cannot inject
-        # additional keys into $GITHUB_OUTPUT (output-file injection). The
-        # delimiter is built from shell-builtin randomness (no external
-        # tools such as openssl/uuidgen, which are not guaranteed on
-        # self-hosted runners) and regenerated until it is provably absent
-        # from the value being emitted.
-        delimiter="ghadelim_${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
-        while [[ "$input" == *"$delimiter"* ]]; do
-          delimiter="ghadelim_${RANDOM}${RANDOM}${RANDOM}${RANDOM}"
-        done
-        {
-          printf '%s<<%s\n' 'output' "$delimiter"
-          printf '%s\n' "$input"
-          printf '%s\n' "$delimiter"
-        } >> "$GITHUB_OUTPUT"
-        echo "Action received: $input ✅"
-        echo "Action received: $input ✅" >> "$GITHUB_STEP_SUMMARY"
+    # update-environment: false keeps this interpreter off the caller's
+    # PATH; the action uses it only to build its own virtualenv.
+    - name: "Set up Python"
+      id: python
+      # yamllint disable-line rule:line-length
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+      with:
+        python-version: "3.12"
+        update-environment: false
+
+    - name: "Install Jenkins Job Builder"
+      shell: bash
+      env:
+        PYTHON: ${{ steps.python.outputs.python-path }}
+      run: |
+        # Install Jenkins Job Builder
+        bash "$GITHUB_ACTION_PATH/scripts/install.sh" "$PYTHON" \
+          "$RUNNER_TEMP/jjb-action-venv"
+
+    - name: "Run Jenkins Job Builder"
+      id: jjb
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
+        INPUT_JJB_PATH: ${{ inputs.jjb_path }}
+        INPUT_JENKINS_URL: ${{ inputs.jenkins_url }}
+        INPUT_JENKINS_USER: ${{ inputs.jenkins_user }}
+        INPUT_JENKINS_PASSWORD: ${{ inputs.jenkins_password }}
+        INPUT_DELETE_OLD: ${{ inputs.delete_old }}
+        INPUT_WORKERS: ${{ inputs.workers }}
+      run: |
+        # Run Jenkins Job Builder
+        bash "$GITHUB_ACTION_PATH/scripts/run.sh" \
+          "$RUNNER_TEMP/jjb-action-venv"

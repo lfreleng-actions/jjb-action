@@ -62,3 +62,6 @@ node_modules/*
 # aislop writes a local score history on every scan (see aislop trend).
 # .aislop/config.yml is the only file there that belongs in git.
 .aislop/history.jsonl
+
+# testing.yaml links global-jjb into this fixture at run time
+tests/fixtures/ci-management/jjb/global-jjb

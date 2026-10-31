@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# Input for requirements.txt, the hash-locked set the action installs.
+# Regenerate the lock after editing this file:
+#
+#   pip-compile --allow-unsafe --generate-hashes --strip-extras \
+#     requirements.in
+#
+# Run it on the Python minor version action.yaml installs.
+
+jenkins-job-builder==6.5.0
+
+# JJB 6.5.0 imports pkg_resources but does not declare setuptools, which
+# stopped shipping pkg_resources in v81. Without this cap every command
+# fails to load (RELENG-5179).
+setuptools<81

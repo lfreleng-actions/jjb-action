@@ -1,0 +1,10 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# References a job template that does not exist, so JJB cannot expand it.
+
+- project:
+    name: broken
+    jobs:
+      - "{name}-missing-template"
