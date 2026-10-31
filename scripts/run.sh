@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 The Linux Foundation
 
-# Run Jenkins Job Builder in test mode.
+# Run Jenkins Job Builder in test or update mode.
 #
 # Usage: run.sh <venv-dir>
 #
 # Expects the inputs in INPUT_* environment variables, already checked
 # by validate.sh, and RUNNER_TEMP and GITHUB_OUTPUT from the runner.
-# The ini file lives in a private directory under RUNNER_TEMP and is
-# removed on every exit path.
+# The ini file holding the credentials lives in a private directory
+# under RUNNER_TEMP and is removed on every exit path.
 
 set -euo pipefail
 
@@ -20,6 +20,7 @@ jjb="$venv/bin/jenkins-jobs"
 # JJB 6.5.0 imports pkg_resources, which warns on every run.
 export PYTHONWARNINGS='ignore:pkg_resources is deprecated:UserWarning'
 
+mode=$INPUT_MODE
 jjb_path=$INPUT_JJB_PATH
 
 work=$(mktemp -d "$RUNNER_TEMP/jjb-action.XXXXXX")
@@ -59,10 +60,33 @@ generate() {
     printf '%s\n' "$count"
 }
 
-output_dir=$(mktemp -d "$RUNNER_TEMP/jjb-output.XXXXXX")
-job_count=$(generate "$output_dir")
-{
-    printf 'job_count=%s\n' "$job_count"
-    printf 'output_dir=%s\n' "$output_dir"
-} >> "$GITHUB_OUTPUT"
-echo "Generated $job_count job(s) into $output_dir ✅"
+if [ "$mode" = test ]; then
+    output_dir=$(mktemp -d "$RUNNER_TEMP/jjb-output.XXXXXX")
+    job_count=$(generate "$output_dir")
+    {
+        printf 'job_count=%s\n' "$job_count"
+        printf 'output_dir=%s\n' "$output_dir"
+    } >> "$GITHUB_OUTPUT"
+    echo "Generated $job_count job(s) into $output_dir ✅"
+    exit 0
+fi
+
+# Update: generate first, so a tree that is broken fails here and one
+# that yields no jobs cannot reach --delete-old, which would remove every
+# job JJB manages on the server.
+job_count=$(generate "$work/generated")
+if [ "$job_count" -eq 0 ] && [ "$INPUT_DELETE_OLD" = true ]; then
+    echo "::error::Refusing to update with delete_old: the tree" \
+        "generates no jobs, so every managed job would be deleted" >&2
+    exit 1
+fi
+
+args=(--conf "$ini" update --workers "$INPUT_WORKERS")
+if [ "$INPUT_DELETE_OLD" = true ]; then
+    args+=(--delete-old)
+fi
+"$jjb" "${args[@]}" "$jjb_path"
+
+printf 'job_count=%s\n' "$job_count" >> "$GITHUB_OUTPUT"
+printf 'output_dir=\n' >> "$GITHUB_OUTPUT"
+echo "Updated Jenkins with $job_count job(s) ✅"

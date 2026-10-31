@@ -6,7 +6,7 @@
 #
 # Reads the inputs from INPUT_* environment variables and fails closed
 # on the first invalid one. Messages name the input but never print its
-# value. Run from the directory
+# value, since some of them are credentials. Run from the directory
 # path_prefix is relative to, normally GITHUB_WORKSPACE.
 
 set -euo pipefail
@@ -56,17 +56,91 @@ check_path() {
     esac
 }
 
+# ConfigParser strips surrounding whitespace and reads a new line as a
+# continuation, so such a value would not reach Jenkins unchanged.
+check_ini_value() {
+    local name=$1 value=$2 ws
+    [ -n "$value" ] || fail "Input '$name' is required in update mode"
+    if [[ $value =~ [[:cntrl:]] ]]; then
+        fail "Input '$name' must not contain control characters"
+    fi
+    for ws in "${whitespace[@]}"; do
+        if [[ $value == "$ws"* || $value == *"$ws" ]]; then
+            fail "Input '$name' must not start or end with whitespace"
+        fi
+    done
+}
+
+# The Jenkins URL must be https:// with a host name, which a dotted
+# IPv4 address also matches, then an optional port from 1 to 65535.
+# A bracketed IP literal is refused: callers run harden-runner in
+# block mode, whose allow-lists name hosts. User info is refused; the
+# credentials have inputs of their own.
+check_url() {
+    local value=$1 rest authority tail host='' port=''
+    local message="Input 'jenkins_url' must be an https:// URL with a host"
+    local label='[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?'
+    local name_re="^$label([.]$label)*[.]?\$"
+    local split_re='^([^:]*)(.*)$'
+    [[ $value == https://* ]] || fail "$message"
+    rest=${value#https://}
+    authority=${rest%%[/?#]*}
+    tail=${rest#"$authority"}
+    if [[ $authority == *@* ]]; then
+        fail "Input 'jenkins_url' must not carry user info"
+    fi
+    if [[ $authority == *'['* ]]; then
+        fail "Input 'jenkins_url' must name its host by DNS name, not an IP literal"
+    fi
+    if [[ $authority =~ $split_re ]]; then
+        host=${BASH_REMATCH[1]}
+        port=${BASH_REMATCH[2]}
+    fi
+    [[ $host =~ $name_re ]] || fail "$message"
+    if [ -n "$port" ]; then
+        if ! [[ $port =~ ^:[1-9][0-9]{0,4}$ ]] || [ "${port#:}" -gt 65535 ]; then
+            fail "Input 'jenkins_url' has an invalid port"
+        fi
+    fi
+    if [[ $tail =~ [[:space:]] ]] || has_whitespace "$tail"; then
+        fail "Input 'jenkins_url' must not contain whitespace"
+    fi
+}
+
 mode=${INPUT_MODE-}
 path_prefix=${INPUT_PATH_PREFIX-}
 jjb_path=${INPUT_JJB_PATH-}
+jenkins_url=${INPUT_JENKINS_URL-}
+jenkins_user=${INPUT_JENKINS_USER-}
+jenkins_password=${INPUT_JENKINS_PASSWORD-}
+delete_old=${INPUT_DELETE_OLD-}
+workers=${INPUT_WORKERS-}
 
 case $mode in
-    test) ;;
-    *) fail "Input 'mode' must be 'test'" ;;
+    test | update) ;;
+    *) fail "Input 'mode' must be 'test' or 'update'" ;;
 esac
 
 check_path path_prefix "$path_prefix"
 check_path jjb_path "$jjb_path"
+
+case $delete_old in
+    true | false) ;;
+    *) fail "Input 'delete_old' must be 'true' or 'false'" ;;
+esac
+
+if ! [[ $workers =~ ^(0|[1-9][0-9]?)$ ]] || [ "$workers" -gt 64 ]; then
+    fail "Input 'workers' must be an integer from 0 to 64"
+fi
+
+if [ "$mode" = update ]; then
+    check_ini_value jenkins_url "$jenkins_url"
+    check_ini_value jenkins_user "$jenkins_user"
+    check_ini_value jenkins_password "$jenkins_password"
+    check_url "$jenkins_url"
+elif [ -n "$jenkins_url$jenkins_user$jenkins_password" ]; then
+    echo "::warning::The jenkins_* inputs are ignored in test mode"
+fi
 
 [ -d "$path_prefix" ] || fail "Input 'path_prefix' is not a directory"
 [ -d "$path_prefix/$jjb_path" ] ||

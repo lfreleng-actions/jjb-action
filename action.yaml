@@ -4,11 +4,11 @@
 
 # jjb-action
 name: "🏗️ Jenkins Job Builder"
-description: "Test Jenkins jobs with a pinned Jenkins Job Builder"
+description: "Test or update Jenkins jobs with a pinned Jenkins Job Builder"
 
 inputs:
   mode:
-    description: "'test' generates the job XML"
+    description: "'test' generates the job XML; 'update' pushes it to Jenkins"
     required: false
     default: "test"
   path_prefix:
@@ -19,6 +19,26 @@ inputs:
     description: "JJB tree relative to path_prefix, processed recursively"
     required: false
     default: "jjb"
+  jenkins_url:
+    description: "Jenkins URL, https:// only (update mode, required there)"
+    required: false
+    default: ""
+  jenkins_user:
+    description: "Jenkins user (update mode, required there)"
+    required: false
+    default: ""
+  jenkins_password:
+    description: "Jenkins password or API token (update mode, required there)"
+    required: false
+    default: ""
+  delete_old:
+    description: "Update mode: pass --delete-old to remove stale managed jobs"
+    required: false
+    default: "true"
+  workers:
+    description: "Update mode: --workers, 0 to 64; 0 means one per CPU"
+    required: false
+    default: "0"
 
 outputs:
   job_count:
@@ -37,6 +57,11 @@ runs:
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
         INPUT_JJB_PATH: ${{ inputs.jjb_path }}
+        INPUT_JENKINS_URL: ${{ inputs.jenkins_url }}
+        INPUT_JENKINS_USER: ${{ inputs.jenkins_user }}
+        INPUT_JENKINS_PASSWORD: ${{ inputs.jenkins_password }}
+        INPUT_DELETE_OLD: ${{ inputs.delete_old }}
+        INPUT_WORKERS: ${{ inputs.workers }}
       run: |
         # Validate inputs
         bash "$GITHUB_ACTION_PATH/scripts/validate.sh"
@@ -67,6 +92,11 @@ runs:
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
         INPUT_JJB_PATH: ${{ inputs.jjb_path }}
+        INPUT_JENKINS_URL: ${{ inputs.jenkins_url }}
+        INPUT_JENKINS_USER: ${{ inputs.jenkins_user }}
+        INPUT_JENKINS_PASSWORD: ${{ inputs.jenkins_password }}
+        INPUT_DELETE_OLD: ${{ inputs.delete_old }}
+        INPUT_WORKERS: ${{ inputs.workers }}
       run: |
         # Run Jenkins Job Builder
         bash "$GITHUB_ACTION_PATH/scripts/run.sh" \

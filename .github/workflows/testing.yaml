@@ -138,6 +138,134 @@ jobs:
           fi
           echo "Broken trees fail ✅"
 
+  update-mode:
+    name: "Update mode"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      # Nothing listens here, so the update fails at its first request
+      # without a DNS lookup or any traffic leaving the runner.
+      UNREACHABLE_URL: "https://127.0.0.1:9"
+    steps:
+      # Load the egress allow-list out-of-band from the
+      # organisation's .github repository and publish it as
+      # $CONNECTION_ALLOW_LIST for the harden-runner step below.
+      # yamllint disable-line rule:line-length
+      - uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        with:
+          config: '@56d70f0eae78f334a598d1ffe071d4b821517b22'  # v0.17.1
+
+      # Harden the runner with the just-loaded allow-list.
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Link global-jjb into the fixture"
+        shell: bash
+        run: |
+          # Link global-jjb into the fixture
+          ln -s ../global-jjb/jjb tests/fixtures/ci-management/jjb/global-jjb
+
+      - name: "Check valid Jenkins URLs pass validation"
+        shell: bash
+        env:
+          INPUT_MODE: update
+          INPUT_PATH_PREFIX: tests/fixtures/no-jobs
+          INPUT_JJB_PATH: jjb
+          INPUT_JENKINS_USER: jjb
+          INPUT_JENKINS_PASSWORD: "not-a-secret"
+          INPUT_DELETE_OLD: "true"
+          INPUT_WORKERS: "0"
+        run: |
+          # Check valid Jenkins URLs pass validation
+          for url in \
+            'https://jenkins.example.org' \
+            'https://jenkins.example.org:8443/ci%20path/?a=1#top' \
+            'https://127.0.0.1:9'; do
+            if ! INPUT_JENKINS_URL=$url bash scripts/validate.sh; then
+              echo "::error::validate.sh rejected $url"
+              exit 1
+            fi
+          done
+
+      # Without delete_old an empty tree is allowed, and with no jobs to
+      # push JJB never contacts Jenkins: this passes against the same
+      # unreachable URL. The next step differs only in delete_old, so
+      # its failure is the refusal, not the network.
+      - name: "Update with an empty tree and no delete_old"
+        id: empty-keep
+        uses: $/
+        with:
+          mode: update
+          path_prefix: tests/fixtures/no-jobs
+          jenkins_url: ${{ env.UNREACHABLE_URL }}
+          jenkins_user: "jjb"
+          jenkins_password: "not-a-secret"
+          delete_old: false
+
+      - name: "Update with an empty tree and delete_old [expected failure]"
+        id: empty-delete
+        continue-on-error: true
+        uses: $/
+        with:
+          mode: update
+          path_prefix: tests/fixtures/no-jobs
+          jenkins_url: ${{ env.UNREACHABLE_URL }}
+          jenkins_user: "jjb"
+          jenkins_password: "not-a-secret"
+          delete_old: true
+
+      - name: "Update an unreachable Jenkins [expected failure]"
+        id: unreachable
+        continue-on-error: true
+        uses: $/
+        with:
+          mode: update
+          path_prefix: tests/fixtures/ci-management
+          jenkins_url: ${{ env.UNREACHABLE_URL }}
+          jenkins_user: "jjb"
+          jenkins_password: "not-a-secret"
+          workers: 2
+
+      - name: "Check the update results"
+        shell: bash
+        env:
+          EMPTY_KEEP_COUNT: ${{ steps.empty-keep.outputs.job_count }}
+          EMPTY_DELETE: ${{ steps.empty-delete.outcome }}
+          UNREACHABLE: ${{ steps.unreachable.outcome }}
+        run: |
+          # Check the update results
+          if [ "$EMPTY_KEEP_COUNT" != 0 ]; then
+            echo "::error::Empty tree reported '$EMPTY_KEEP_COUNT' jobs"
+            exit 1
+          fi
+          if [ "$EMPTY_DELETE" != failure ]; then
+            echo "::error::An empty tree with delete_old was not refused"
+            exit 1
+          fi
+          if [ "$UNREACHABLE" != failure ]; then
+            echo "::error::Updating an unreachable Jenkins did not fail"
+            exit 1
+          fi
+          left=$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" \
+            -name jenkins_jobs.ini -print)
+          if [ -n "$left" ]; then
+            echo "::error::jenkins_jobs.ini left behind: $left"
+            exit 1
+          fi
+          echo "Update mode refuses and cleans up ✅"
+
   rejections:
     name: "Reject ${{ matrix.case }}"
     runs-on: ubuntu-latest
@@ -147,8 +275,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every rejected value carries S3ntinel, so the log can be
-        # checked for an echoed value.
+        # Every rejected value carries S3ntinel, or is named in 'leak',
+        # so the log can be checked for an echoed value.
         include:
           - case: "unknown mode"
             mode: "deploy-S3ntinel"
@@ -178,11 +306,117 @@ jobs:
             jjb_path: "jjb\tS3ntinel"
           - case: "missing jjb_path directory"
             jjb_path: "S3ntinel"
+          - case: "invalid delete_old"
+            delete_old: "yes-S3ntinel"
+          - case: "non-numeric workers"
+            workers: "S3ntinel"
+          - case: "negative workers"
+            workers: "-1"
+            leak: "-1"
+          - case: "workers above 64"
+            workers: "65"
+            leak: "65"
+          - case: "zero-padded workers"
+            workers: "08"
+            leak: "08"
+          - case: "update without jenkins_url"
+            mode: "update"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update without jenkins_user"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_password: "S3ntinel-password"
+          - case: "update without jenkins_password"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_user: "S3ntinel-user"
+          - case: "update with an http:// URL"
+            mode: "update"
+            jenkins_url: "http://S3ntinel.invalid"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a URL without a host"
+            mode: "update"
+            jenkins_url: "https:///S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with an empty host and a port"
+            mode: "update"
+            jenkins_url: "https://:443/S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with an empty host and a query"
+            mode: "update"
+            jenkins_url: "https://?S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with an empty host and a fragment"
+            mode: "update"
+            jenkins_url: "https://#S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a port above 65535"
+            mode: "update"
+            jenkins_url: "https://S3ntinel.invalid:65536"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with user info in the URL"
+            mode: "update"
+            jenkins_url: "https://S3ntinel@jenkins.invalid"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a bracketed IPv6 loopback"
+            mode: "update"
+            jenkins_url: "https://[::1]:8443/S3ntinel/"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a bracketed IPv6 address"
+            mode: "update"
+            jenkins_url: "https://[2001:db8::1]/S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a malformed IPv6 literal ':::'"
+            mode: "update"
+            jenkins_url: "https://[:::]/S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a short IPv6 literal"
+            mode: "update"
+            jenkins_url: "https://[1:2:3]/S3ntinel"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel-password"
+          - case: "update with a password spanning lines"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_user: "jjb"
+            jenkins_password: "S3ntinel\nsecond-line"
+          - case: "update with a padded password"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_user: "jjb"
+            jenkins_password: " S3ntinel "
+          - case: "update with a password padded by non-breaking spaces"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_user: "jjb"
+            jenkins_password: "\u00a0S3ntinel\u00a0"
+          - case: "update with a user ending in an ideographic space"
+            mode: "update"
+            jenkins_url: "https://jenkins.invalid"
+            jenkins_user: "S3ntinel-user\u3000"
+            jenkins_password: "jjb-password"
     env:
       INPUT_MODE: ${{ matrix.mode || 'test' }}
       INPUT_PATH_PREFIX: >-
         ${{ matrix.path_prefix || 'tests/fixtures/ci-management' }}
       INPUT_JJB_PATH: ${{ matrix.jjb_path || 'jjb' }}
+      INPUT_JENKINS_URL: ${{ matrix.jenkins_url }}
+      INPUT_JENKINS_USER: ${{ matrix.jenkins_user }}
+      INPUT_JENKINS_PASSWORD: ${{ matrix.jenkins_password }}
+      INPUT_DELETE_OLD: ${{ matrix.delete_old || 'true' }}
+      INPUT_WORKERS: ${{ matrix.workers || '0' }}
+      LEAK: ${{ matrix.leak || 'S3ntinel' }}
     steps:
       # Load the egress allow-list out-of-band from the
       # organisation's .github repository and publish it as
@@ -214,6 +448,11 @@ jobs:
           mode: ${{ env.INPUT_MODE }}
           path_prefix: ${{ env.INPUT_PATH_PREFIX }}
           jjb_path: ${{ env.INPUT_JJB_PATH }}
+          jenkins_url: ${{ env.INPUT_JENKINS_URL }}
+          jenkins_user: ${{ env.INPUT_JENKINS_USER }}
+          jenkins_password: ${{ env.INPUT_JENKINS_PASSWORD }}
+          delete_old: ${{ env.INPUT_DELETE_OLD }}
+          workers: ${{ env.INPUT_WORKERS }}
 
       # The action's log cannot be read back, so run the validator on
       # the same inputs to check the reason and that nothing leaks.
@@ -232,7 +471,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$out"
-          if [[ $out == *S3ntinel* ]]; then
+          if [[ $out == *"$LEAK"* ]]; then
             echo "::error::The rejection message echoes the value"
             exit 1
           fi
