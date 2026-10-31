@@ -1,0 +1,11 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+- job-template:
+    name: "{project-name}-merge"
+    description: "Merge job from this repository's own templates"
+    node: "{build-node}"
+    project-type: freestyle
+    builders:
+      - shell: echo "Merging {project-name}"

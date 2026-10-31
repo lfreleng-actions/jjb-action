@@ -139,9 +139,16 @@ repos:
       - id: check-merge-conflict
       - id: check-xml
       - id: check-yaml
+        # JJB's custom tags (!include-raw-verbatim: and others) have no
+        # constructor here; jenkins-jobs test validates the fixtures and
+        # yamllint still lints them.
+        exclude: '^tests/fixtures/'
       - id: debug-statements
       - id: end-of-file-fixer
       - id: requirements-txt-fixer
+        # pip-compile owns the lock's order and annotations; sorting it
+        # would detach each '# via' comment from its package.
+        exclude: '^requirements\.txt$'
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: no-commit-to-branch

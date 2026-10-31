@@ -1,0 +1,23 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# Stands in for lfit/releng-global-jjb, which ci-management repositories
+# carry as a submodule and reach through a jjb/global-jjb symlink.
+
+- defaults:
+    name: global
+    build-node: centos-builder
+    build-timeout: 30
+
+- job-template:
+    name: "{project-name}-global-verify"
+    description: "Verify job from the global templates"
+    node: "{build-node}"
+    project-type: freestyle
+    parameters:
+      - string:
+          name: BUILD_TIMEOUT
+          default: "{build-timeout}"
+    builders:
+      - shell: !include-raw-verbatim: ../shell/verify.sh

@@ -20,13 +20,12 @@ concurrency:
 permissions: {}
 
 jobs:
-  ### Test the GitHub Action in this Repository ###
-  tests:
-    name: "Test local GitHub Action"
+  test-mode:
+    name: "Test mode"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 10 # Increase this timeout value as needed
+    timeout-minutes: 10
     steps:
       # Load the egress allow-list out-of-band from the
       # organisation's .github repository and publish it as
@@ -50,41 +49,195 @@ jobs:
         with:
           persist-credentials: false
 
-      # Perform setup prior to running test(s)
-      - name: "Testing setup step"
+      # The publisher cannot commit a symlink, so link global-jjb into
+      # the tree here, the way ci-management repositories link their
+      # global-jjb submodule.
+      - name: "Link global-jjb into the fixture"
         shell: bash
         run: |
-          # Testing setup step
-          echo "Testing setup step"
-          echo "Testing setup step/summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Link global-jjb into the fixture
+          ln -s ../global-jjb/jjb tests/fixtures/ci-management/jjb/global-jjb
 
-      - name: "Running local action: ${{ github.repository }}"
+      - name: "Generate the fixture's jobs"
+        id: fixture
         uses: $/
         with:
-          input: "test input 💬"
+          mode: test
+          path_prefix: tests/fixtures/ci-management
+          jjb_path: jjb
 
-      - name: "Validated local action: ${{ github.repository }}"
+      - name: "Check the generated jobs"
         shell: bash
         env:
-          REPO: ${{ github.repository }}
+          JOB_COUNT: ${{ steps.fixture.outputs.job_count }}
+          OUTPUT_DIR: ${{ steps.fixture.outputs.output_dir }}
         run: |
-          # Local action validation
-          echo "Validated local action: $REPO"
-          echo "Validation step summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Check the generated jobs
+          if [ "$JOB_COUNT" != 2 ]; then
+            echo "::error::job_count is '$JOB_COUNT', expected 2"
+            exit 1
+          fi
+          case $OUTPUT_DIR in
+            "$RUNNER_TEMP"/*) ;;
+            *) echo "::error::output_dir is not under RUNNER_TEMP"; exit 1 ;;
+          esac
+          diff -r --exclude='*.license' tests/expected/ci-management \
+            "$OUTPUT_DIR"
+          echo "Generated XML matches the expected jobs ✅"
 
-      # yamllint disable-line rule:line-length
-      - name: "Running local action: ${{ github.repository }} [Override Failure]"
-        uses: $/
-        id: failure
-        continue-on-error: true
-        with:
-          invalid_input: "Some garbage"
-
-      # Failure testing is also important
-      - name: "Error if step above did NOT fail"
-        if: steps.failure.outcome == 'success'
+      - name: "Check no ini file is left behind"
         shell: bash
         run: |
-          # Error if step above did NOT fail
-          echo "Error: previous test step did NOT fail ❌"
-          exit 1
+          # Check no ini file is left behind
+          left=$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" \
+            -name jenkins_jobs.ini -print)
+          if [ -n "$left" ]; then
+            echo "::error::jenkins_jobs.ini left behind: $left"
+            exit 1
+          fi
+          echo "No ini file left behind ✅"
+
+      - name: "Check JJB reads the ini values back unchanged"
+        shell: bash
+        run: |
+          # Check JJB reads the ini values back unchanged
+          bash tests/ini-roundtrip.sh "$RUNNER_TEMP/jjb-action-venv"
+
+      - name: "Generate a malformed tree [expected failure]"
+        id: malformed
+        continue-on-error: true
+        uses: $/
+        with:
+          path_prefix: tests/fixtures/malformed
+
+      - name: "Remove the global-jjb link"
+        shell: bash
+        run: |
+          # Remove the global-jjb link
+          rm tests/fixtures/ci-management/jjb/global-jjb
+
+      # Without the link the project names templates JJB cannot find,
+      # which shows the link was followed above.
+      - name: "Generate without global-jjb [expected failure]"
+        id: unlinked
+        continue-on-error: true
+        uses: $/
+        with:
+          path_prefix: tests/fixtures/ci-management
+
+      - name: "Check the expected failures failed"
+        shell: bash
+        env:
+          MALFORMED: ${{ steps.malformed.outcome }}
+          UNLINKED: ${{ steps.unlinked.outcome }}
+        run: |
+          # Check the expected failures failed
+          if [ "$MALFORMED" != failure ] || [ "$UNLINKED" != failure ]; then
+            echo "::error::A tree JJB cannot expand did not fail"
+            exit 1
+          fi
+          echo "Broken trees fail ✅"
+
+  rejections:
+    name: "Reject ${{ matrix.case }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every rejected value carries S3ntinel, so the log can be
+        # checked for an echoed value.
+        include:
+          - case: "unknown mode"
+            mode: "deploy-S3ntinel"
+          - case: "absolute path_prefix"
+            path_prefix: "/tmp/S3ntinel"
+          - case: "path_prefix with '..'"
+            path_prefix: "tests/../S3ntinel"
+          - case: "path_prefix with leading '-'"
+            path_prefix: "-S3ntinel"
+          - case: "path_prefix with whitespace"
+            path_prefix: "tests/S3ntinel dir"
+          - case: "path_prefix with a non-breaking space"
+            path_prefix: "tests/S3ntinel\u00a0dir"
+          - case: "path_prefix with a control character"
+            path_prefix: "tests/S3ntinel\x01"
+          - case: "missing path_prefix directory"
+            path_prefix: "tests/S3ntinel"
+          - case: "absolute jjb_path"
+            jjb_path: "/S3ntinel"
+          - case: "jjb_path with '..'"
+            jjb_path: "../S3ntinel"
+          - case: "jjb_path with leading '-'"
+            jjb_path: "--S3ntinel"
+          - case: "jjb_path with a new line"
+            jjb_path: "jjb\nS3ntinel"
+          - case: "jjb_path with a tab"
+            jjb_path: "jjb\tS3ntinel"
+          - case: "missing jjb_path directory"
+            jjb_path: "S3ntinel"
+    env:
+      INPUT_MODE: ${{ matrix.mode || 'test' }}
+      INPUT_PATH_PREFIX: >-
+        ${{ matrix.path_prefix || 'tests/fixtures/ci-management' }}
+      INPUT_JJB_PATH: ${{ matrix.jjb_path || 'jjb' }}
+    steps:
+      # Load the egress allow-list out-of-band from the
+      # organisation's .github repository and publish it as
+      # $CONNECTION_ALLOW_LIST for the harden-runner step below.
+      # yamllint disable-line rule:line-length
+      - uses: lfreleng-actions/harden-runner-block-action@e5e8179f45aa893b23cc8b5d2e25466355d9c4f8  # v0.14.0
+        with:
+          config: '@56d70f0eae78f334a598d1ffe071d4b821517b22'  # v0.17.1
+
+      # Harden the runner with the just-loaded allow-list.
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Run the action [expected failure]"
+        id: action
+        continue-on-error: true
+        uses: $/
+        with:
+          mode: ${{ env.INPUT_MODE }}
+          path_prefix: ${{ env.INPUT_PATH_PREFIX }}
+          jjb_path: ${{ env.INPUT_JJB_PATH }}
+
+      # The action's log cannot be read back, so run the validator on
+      # the same inputs to check the reason and that nothing leaks.
+      - name: "Check the rejection"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          # Check the rejection
+          if [ "$OUTCOME" != failure ]; then
+            echo "::error::The action accepted the input"
+            exit 1
+          fi
+          if out=$(bash scripts/validate.sh 2>&1); then
+            echo "::error::validate.sh accepted the input"
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          if [[ $out == *S3ntinel* ]]; then
+            echo "::error::The rejection message echoes the value"
+            exit 1
+          fi
+          if [ -d "$RUNNER_TEMP/jjb-action-venv" ]; then
+            echo "::error::The action ran past validation"
+            exit 1
+          fi
+          echo "Rejected before anything ran, without echoing it ✅"
