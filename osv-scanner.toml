@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# OSV advisories in the locked setuptools that cannot affect this action.
+#
+# requirements.in caps setuptools<81 because JJB 6.5.0 imports
+# pkg_resources (RELENG-5179), and the cap blocks every fixed release.
+# Remove these ignores together with that cap and the matching
+# Dependabot ignore in .github/dependabot.yml, once JJB stops
+# importing pkg_resources.
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-3447"
+reason = """\
+Affects building a source distribution from MANIFEST.in. The action \
+never builds one: scripts/install.sh installs the hash-locked set with \
+--only-binary ':all:', and setuptools only provides pkg_resources to JJB.\
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-h35f-9h28-mq5c"
+reason = """\
+Alias of PYSEC-2026-3447. Affects building a source distribution from \
+MANIFEST.in, which the action never does.\
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-xmj3-9gf7-h52w"
+reason = """\
+Needs Windows and setuptools' Wheel.install_as_egg(). pip installs \
+wheels itself and never calls it, and the action runs only on POSIX \
+hosts: scripts/install.sh uses $venv/bin paths.\
+"""

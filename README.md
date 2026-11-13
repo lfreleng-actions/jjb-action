@@ -169,7 +169,10 @@ Dependabot proposes updates to the lock.
 JJB 6.5.0 imports `pkg_resources` without declaring `setuptools`, which
 dropped `pkg_resources` in v81. The lock carries a
 `setuptools` below v81; without it every `jenkins-jobs` command fails to
-load (RELENG-5179).
+load (RELENG-5179). The cap pins two `setuptools` advisories that
+`osv-scanner.toml` ignores: PYSEC-2026-3447 affects building a source
+distribution, which the action never does, and GHSA-xmj3-9gf7-h52w
+needs Windows and a legacy wheel-to-egg path that pip never calls.
 
 The ini file sets `ignore_cache=True`, `keep_descriptions=False`,
 `include_path=.` and `recursive=True` under `[job_builder]`, and

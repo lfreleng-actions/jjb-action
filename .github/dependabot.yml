@@ -29,6 +29,8 @@ updates:
       default-days: 7
     ignore:
       # JJB 6.5.0 needs pkg_resources, which setuptools v81 removed.
+      # Drop this ignore together with the cap in requirements.in and
+      # the advisory ignores in osv-scanner.toml.
       - dependency-name: "setuptools"
         versions: [">=81"]
     open-pull-requests-limit: 15
