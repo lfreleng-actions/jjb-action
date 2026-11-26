@@ -460,12 +460,15 @@ jobs:
         shell: bash
         env:
           OUTCOME: ${{ steps.action.outcome }}
+        # The linter directive below must sit on one line.
+        # yamllint disable rule:line-length
         run: |
           # Check the rejection
           if [ "$OUTCOME" != failure ]; then
             echo "::error::The action accepted the input"
             exit 1
           fi
+          # gha-workflow-linter: stderr-merge-ok -- negative test inspects the rejection message on stderr for a leaked value
           if out=$(bash scripts/validate.sh 2>&1); then
             echo "::error::validate.sh accepted the input"
             exit 1
@@ -480,3 +483,4 @@ jobs:
             exit 1
           fi
           echo "Rejected before anything ran, without echoing it ✅"
+        # yamllint enable rule:line-length
